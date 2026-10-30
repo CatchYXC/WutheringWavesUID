@@ -397,7 +397,11 @@ def sharpen_and_clean(img: Image.Image, k: float = 10, median_size: int = 5, res
 
     result = arr.copy().astype(np.uint8)
     result[1:-1, 1:-1] = sharp
-    return Image.fromarray(result).filter(ImageFilter.MedianFilter(size=median_size))
+
+    out = Image.fromarray(result)
+    if median_size > 1:
+        out = out.filter(ImageFilter.MedianFilter(size=median_size))
+    return out
 
 
 async def cut_card_to_ocr(image: Image.Image) -> tuple[int, list[dict], list[Image.Image]]:
@@ -546,6 +550,9 @@ async def ocr_results_to_dict(chain_num: int, chek_imgs: list[dict], ocr_results
                             "清育": "清宵",
                             "ト靈": "卜灵",
                             "狭玄翎": "玄翎",
+                            "銷暝": "锁暝",
+                            "銀暝": "锁暝",
+                            "鎻暝": "锁暝",
                         }
                         for old, new in REPLACE_MAP.items():
                             name = name.replace(old, new)
