@@ -45,7 +45,7 @@ NO = NO.resize((40, 40))
 bar_down = Image.open(TEXT_PATH / "bar_down.png")
 
 based_w = 1150
-based_h = 850
+based_h = 810  # 调整高度，去除底部版权留白
 
 
 async def seconds2hours(seconds: int) -> str:
@@ -96,9 +96,20 @@ async def process_uid(uid, ev):
 async def draw_stamina_img(bot: Bot, ev: Event):
     try:
         uid_list = await WavesBind.get_uid_list_by_game(ev.user_id, ev.bot_id)
-        logger.info(f"[鸣潮][每日信息]UID: {uid_list}")
+        logger.info(f"[鸣潮][每日信息]过滤前 UID: {uid_list}")
         if uid_list is None:
             return ERROR_CODE[WAVES_CODE_103]
+
+        # 1. 写死不渲染的 UID 列表
+        ignore_uids = {""}
+        
+        # 2. 过滤掉不需要渲染的 UID
+        uid_list = [uid for uid in uid_list if str(uid) not in ignore_uids]
+        logger.info(f"[鸣潮][每日信息]过滤后 UID: {uid_list}")
+
+        # 3. 如果过滤后没有需要渲染的 UID，提前返回提示
+        if not uid_list:
+            return "你绑定的UID均为不渲染的UID，无需生成图片。"
 
         # 并行生成所有 UID 对应的体力图片
         tasks = [process_uid(uid, ev) for uid in uid_list]
@@ -112,7 +123,7 @@ async def draw_stamina_img(bot: Bot, ev: Event):
                 return "\n".join(error_msgs)
             return ERROR_CODE[WAVES_CODE_102]
 
-        # 并行绘制每个 UID 的体力图片（保持原 _draw_stamina_img 逻辑不变）
+        # 串行绘制每个 UID 的体力图片
         stamina_images = []
         for valid in valid_daily_list:
             img_single = await _draw_stamina_img(ev, valid)
@@ -122,28 +133,15 @@ async def draw_stamina_img(bot: Bot, ev: Event):
         w, h = based_w, based_h
         count = len(stamina_images)
 
-        # 自动计算最佳列数（使最终画布宽高比接近 1）
-        gap = 1  # 网格间距（像素），可调整
-        best_cols = 1
-        best_ratio = float("inf")
-        for cols in range(1, count + 1):
-            rows = (count + cols - 1) // cols
-            total_w = cols * w + (cols - 1) * gap
-            total_h = rows * h + (rows - 1) * gap
-            ratio = max(total_w, total_h) / min(total_w, total_h)
-            if ratio < best_ratio:
-                best_ratio = ratio
-                best_cols = cols
-
-        cols = best_cols
-        rows = (count + cols - 1) // cols
-        total_w = cols * w + (cols - 1) * gap
+        # 强制设为始终一列，一直往下排
+        gap = 0  # 将间距改为 0，消除卡片之间的缝隙
+        cols = 1
+        rows = count
+        total_w = w
         total_h = rows * h + (rows - 1) * gap
 
-        # 加载并缩放背景图片
-        bg_img = Image.open(TEXT_PATH / "bg.jpg").convert("RGB")
-        bg_img = bg_img.resize((total_w, total_h), Image.Resampling.LANCZOS)
-        final_img = bg_img.copy()  # 使用背景作为底图
+        # 不要用拉伸的底图，直接新建透明画布，避免多出背景颜色
+        final_img = Image.new("RGBA", (total_w, total_h), (0, 0, 0, 0))
 
         # 按网格粘贴
         for idx, img_single in enumerate(stamina_images):
@@ -155,7 +153,7 @@ async def draw_stamina_img(bot: Bot, ev: Event):
 
         # 转换为最终返回格式（保持原返回类型）
         res = await convert_img(final_img)
-        logger.info("[鸣潮][每日信息]绘图已完成（方形布局）,等待发送!")
+        logger.info("[鸣潮][每日信息]绘图已完成（无缝隙单列布局）,等待发送!")
     except TypeError:
         logger.exception("[鸣潮][每日信息]绘图失败!")
         res = "你绑定过的UID中可能存在过期CK~请重新绑定一下噢~"
@@ -217,12 +215,10 @@ async def _draw_stamina_img(ev: Event, valid: dict) -> Image.Image:
         else:
             pile_id = char_id
     pile = await get_random_waves_role_pile(pile_id)
-    # pile = pile.crop((0, 0, pile.size[0], pile.size[1] - 155))
 
     base_info_draw = ImageDraw.Draw(base_info_bg)
     base_info_draw.text((275, 120), f"{daily_info.roleName[:7]}", GREY, waves_font_30, "lm")
     base_info_draw.text((226, 173), f"特征码:  {daily_info.roleId}", GOLD, waves_font_25, "lm")
-    # 账号基本信息，由于可能会没有，放在一起
 
     title_bar = Image.open(TEXT_PATH / "title_bar.png")
     title_bar_draw = ImageDraw.Draw(title_bar)
@@ -246,12 +242,9 @@ async def _draw_stamina_img(ev: Event, valid: dict) -> Image.Image:
         "mm",
     )
 
-    # logo_img = get_small_logo(2)
-    # title_bar.alpha_composite(logo_img, dest=(760, 60))
-
     weekly_frame_cur = daily_info.weeklyFrameData.cur if daily_info.weeklyFrameData else 0
     weekly_frame_total = daily_info.weeklyFrameData.total if daily_info.weeklyFrameData else 0
-    menFei = "周度游历" if not waves_api.is_net(daily_info.roleId) else "国际服暂无数据"
+    menFei = "周度游历" if not waves_api.is_net(daily_info.roleId) else "暂无数据"
     color = RED if weekly_frame_cur != weekly_frame_total else GREEN
     title_bar_draw.text((810, 125), menFei, GREY, waves_font_26, "mm")
     title_bar_draw.text(
@@ -266,8 +259,7 @@ async def _draw_stamina_img(ev: Event, valid: dict) -> Image.Image:
     active_draw = ImageDraw.Draw(info)
     curr_time = int(time.time())
     refreshTimeStamp = daily_info.energyData.refreshTimeStamp if daily_info.energyData.refreshTimeStamp else curr_time
-    # remain_time = await seconds2hours(refreshTimeStamp - curr_time)
-    # 设置体力推送时间
+    
     push_icon = NO
     push_text = "体力推送关闭"
     if "!请稍后重试!" not in account_info.name and account_info.activeDays != 0:
@@ -358,14 +350,6 @@ async def _draw_stamina_img(ev: Event, valid: dict) -> Image.Image:
     status_img3_draw.text((50, 20), f"{push_text}", "white", waves_font_30, "lm")
     img.alpha_composite(status_img3, (70, 160))
 
-    # bbs状态
-    # status_img3 = Image.new("RGBA", (300, 40), (255, 255, 255, 0))
-    # status_img3_draw = ImageDraw.Draw(status_img3)
-    # status_img3_draw.rounded_rectangle([0, 0, 300, 40], fill=(0, 0, 0, int(0.3 * 255)))
-    # status_img3.alpha_composite(bbs_icon, (0, 0))
-    # status_img3_draw.text((50, 20), f"{bbs_text}", "white", waves_font_30, "lm")
-    # img.alpha_composite(status_img3, (70, 80))
-
     # pile 放在背景上
     img.paste(pile, (550, -150), pile)
     # 贴个bar_down
@@ -379,7 +363,9 @@ async def _draw_stamina_img(ev: Event, valid: dict) -> Image.Image:
     img.paste(avatar, (40, 620), avatar)
     # account_info 放背景上
     img.paste(title_bar, (190, 620), title_bar)
-    img = add_footer(img, 600, 25)
+    
+    # 裁剪掉原本放版权信息的高度，不留空白
+    img = img.crop((0, 0, based_w, based_h))
     return img
 
 
